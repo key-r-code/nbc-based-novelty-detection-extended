@@ -1,0 +1,6 @@
+meta:
+  jupyter_hot_reload: True
+  extract_upstream: True
+  extract_product: True
+
+tasks: '{{factory}}'
