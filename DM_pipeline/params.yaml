@@ -1,8 +1,0 @@
-# all gz files
-input_directory: "/ifs/rosenMRIGrp/groups/"
-
-file_pattern: "+*.gz"
-
-num_chunks: 20
-
-
