@@ -1,0 +1,6 @@
+input_dir: "/ifs/groups/rosenMRIGrp/gailr/darkmatter_animalgut_test"
+temp_dir: "/ifs/groups/rosenMRIGrp/kr3288/extended/DM_pipeline_basic/temp/"
+output_dir: "/ifs/groups/rosenMRIGrp/kr3288/extended/DM_pipeline_basic/output/"
+
+chunks_per_file: 60  # Number of chunks to split each FASTA file into
+

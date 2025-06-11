@@ -1,0 +1,149 @@
+import os
+import glob
+
+configfile: "config.yaml"
+
+INPUT_DIR = os.path.abspath(config["input_dir"])
+TEMP_DIR = os.path.abspath(config["temp_dir"])
+OUTPUT_DIR = os.path.abspath(config["output_dir"])
+
+# Find all fastq.gz files in the input directory
+input_files = glob.glob(os.path.join(INPUT_DIR, "*.fastq.gz"))
+SAMPLES = [os.path.basename(f).replace(".fastq.gz", "") for f in input_files]
+
+print(f"Found {len(SAMPLES)} input files: {SAMPLES}")
+
+# Define the target rule that ensures all output is generated
+rule all:
+    input:
+        expand(os.path.join(OUTPUT_DIR, "{sample}/complete.flag"), sample=SAMPLES)
+
+# Rule for gunzipping the fastq files
+rule gunzip_fastq:
+    input:
+        os.path.join(INPUT_DIR, "{sample}.fastq.gz")
+    output:
+        temp(os.path.join(TEMP_DIR, "{sample}.fastq"))
+    shell:
+        "gunzip -c {input} > {output}"
+
+# Create directory named after the file
+rule create_directory:
+    input:
+        os.path.join(TEMP_DIR, "{sample}.fastq")
+    output:
+        directory(os.path.join(OUTPUT_DIR, "{sample}")),
+        directory(os.path.join(OUTPUT_DIR, "{sample}/chunks")),
+        directory(os.path.join(OUTPUT_DIR, "{sample}/scripts"))
+    shell:
+        """
+        mkdir -p {output}
+        """
+
+# Convert FASTQ to FASTA using sed
+rule convert_to_fasta:
+    input:
+        fastq = os.path.join(TEMP_DIR, "{sample}.fastq"),
+        dir = os.path.join(OUTPUT_DIR, "{sample}")
+    output:
+        os.path.join(OUTPUT_DIR, "{sample}/{sample}.fasta")
+    shell:
+        """
+        sed -n '1~4s/^@/>/p;2~4p' {input.fastq} > {output}
+        """
+
+# Split FASTA into chunks using Biopython
+rule split_fasta:
+    input:
+        fasta = os.path.join(OUTPUT_DIR, "{sample}/{sample}.fasta"),
+        chunks_dir = os.path.join(OUTPUT_DIR, "{sample}/chunks")
+    output:
+        touch(os.path.join(OUTPUT_DIR, "{sample}/chunks.done"))
+    params:
+        num_chunks = config["chunks_per_file"],
+        outdir = os.path.join(OUTPUT_DIR, "{sample}/chunks")
+    script:
+        "scripts/split_fasta.py"
+
+# Generate shell scripts for each chunk
+# Generate shell scripts for each chunk
+rule generate_scripts:
+    input:
+        chunks_done = os.path.join(OUTPUT_DIR, "{sample}/chunks.done"),
+        scripts_dir = os.path.join(OUTPUT_DIR, "{sample}/scripts")
+    output:
+        touch(os.path.join(OUTPUT_DIR, "{sample}/scripts.done"))
+    params:
+        scripts_dir = os.path.join(OUTPUT_DIR, "{sample}/scripts")
+    run:
+        import glob
+        import os
+        import shutil
+        
+        # Get chunks directory path
+        chunks_dir = os.path.join(os.path.dirname(input.scripts_dir), "chunks")
+        
+        # Get all chunk files and sort them properly
+        chunk_files = sorted(glob.glob(os.path.join(chunks_dir, "chunk_*.fasta")), 
+                           key=lambda x: int(os.path.basename(x).split('_')[1].split('.')[0]))
+        
+        # Create a temp directory to store the reorganized chunks
+        temp_dir = os.path.join(os.path.dirname(input.scripts_dir), "temp_chunks")
+        os.makedirs(temp_dir, exist_ok=True)
+        
+        # Generate a script for each chunk that processes exactly that chunk
+        for chunk_file in chunk_files:
+            chunk_name = os.path.basename(chunk_file)
+            chunk_num = chunk_name.split('_')[1].split('.')[0]  # Extract number from chunk_XX.fasta
+            
+            # Create individual directory for this chunk
+            chunk_dir = os.path.join(temp_dir, f"chunk_{chunk_num}")
+            os.makedirs(chunk_dir, exist_ok=True)
+            
+            # Copy the chunk file into its own directory
+            new_chunk_path = os.path.join(chunk_dir, chunk_name)
+            shutil.copy2(chunk_file, new_chunk_path)
+        
+        # Replace the original chunks directory with the temp directory
+        shutil.rmtree(chunks_dir)
+        shutil.move(temp_dir, chunks_dir)
+        
+        # Now create the scripts using the final directory structure
+        for chunk_num in range(1, len(chunk_files) + 1):
+            # Get the correct absolute path to the chunk directory after reorganization
+            final_chunk_dir = os.path.join(chunks_dir, f"chunk_{chunk_num}")
+            abs_chunk_dir = os.path.abspath(final_chunk_dir)
+            
+            # Create script
+            script_path = os.path.join(input.scripts_dir, f"chunk_{chunk_num}.sh")
+            
+            with open(script_path, 'w') as out:
+                out.write(f"""#!/bin/bash
+#SBATCH --partition=def-sm
+#SBATCH --mail-user=kr3288@drexel.edu
+#SBATCH --account=rosenfreeprj
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=1
+#SBATCH --time=12:00:00
+#SBATCH --mem=93GB
+#SBATCH --cpus-per-task=24
+
+. ~/.bashrc
+start=`date +%s`
+
+singularity exec --bind /ifs/groups/rosenMRIGrp/kr3288:/ifs/groups/rosenMRIGrp/kr3288,/beegfs:/mnt2 /ifs/groups/rosenMRIGrp/kr3288/nbc_cross_validation_env_latest.sif NB.run classify {abs_chunk_dir} -s /ifs/groups/rosenMRIGrp/kr3288/extended/9_mer_basic -k 9 -m 93000 -t 24 -d /mnt2/scratch/$SLURM_JOB_ID -o {abs_chunk_dir}
+
+end=`date +%s`
+runtime=$((end-start))
+echo "run time: $runtime"
+""")
+            shell(f"chmod +x {script_path}")
+
+# Create a completion flag to mark successful processing of a sample
+rule create_completion_flag:
+    input:
+        scripts_done = os.path.join(OUTPUT_DIR, "{sample}/scripts.done")
+    output:
+        os.path.join(OUTPUT_DIR, "{sample}/complete.flag")
+    shell:
+        "touch {output}"
