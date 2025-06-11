@@ -1,6 +1,6 @@
 input_dir: "/ifs/groups/rosenMRIGrp/kr3288/extended/test_dir/"
-temp_dir: "/ifs/groups/rosenMRIGrp/kr3288/extended/DM_pipeline/temp/"
-output_dir: "/ifs/groups/rosenMRIGrp/kr3288/extended/DM_pipeline/output/"
+temp_dir: "/ifs/groups/rosenMRIGrp/kr3288/extended/DM_pipeline_extended/temp/"
+output_dir: "/ifs/groups/rosenMRIGrp/kr3288/extended/DM_pipeline_extended/output/"
 
 chunks_per_file: 20  # Number of chunks to split each FASTA file into
 
